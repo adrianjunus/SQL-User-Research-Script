@@ -1,0 +1,131 @@
+--There are several databases avaible on this server. Declaring the database explicitly is an easy way to reduce confusion when sharing this query.
+USE [XXXXXXX]
+GO
+
+--User input goes here. For ease of use rather than having a user input values in a WHERE filter throught a query, they can just do it in this declared variable.
+--Comma delimited, will be parsed later
+DECLARE @STR VARCHAR(MAX) = '
+XXXXXXX
+'
+--===============		NO ADDITIONAL INPUT BELOW THIS LINE		===============--
+
+--Copies the delimited @STR values into a list
+DECLARE @SN_LIST TABLE (SERIAL_NUMBER NVARCHAR(100))
+
+	WHILE LEN(@STR) > 0
+		BEGIN
+
+			DECLARE @SERIAL_NUMBER NVARCHAR(100)
+				IF CHARINDEX(',',@STR) > 0
+					SET  @SERIAL_NUMBER = SUBSTRING(@STR,0,CHARINDEX(',',@STR))
+				ELSE
+					BEGIN
+					SET  @SERIAL_NUMBER = @STR
+					SET @STR = ''
+					END
+			  INSERT INTO @SN_LIST VALUES (REPLACE(REPLACE(REPLACE(@SERIAL_NUMBER,CHAR(9),''),CHAR(10),''),CHAR(13),''))
+			 SET @STR = REPLACE(@STR,@SERIAL_NUMBER + ',' , '')
+	 END
+
+	
+
+--Declare a temp table to place query results in
+DECLARE @IB_TEMP TABLE
+	(
+		RowNumber INT,
+		dim_install_site_customer_key VARCHAR(255),
+		instance_id VARCHAR(255),
+		serial_num VARCHAR(255),
+		parent_instance_id VARCHAR(255),
+		parent_serial_num VARCHAR(255),
+		site_number VARCHAR(255),
+		sales_order_number VARCHAR(255),
+		actual_ship_date DATETIME,
+		active_start_date DATETIME,
+		active_end_date DATETIME,
+		contract_line_start_date_previous DATETIME,
+		contract_line_end_date_previous DATETIME,
+		contract_line_start_date_future DATETIME,
+		contract_line_end_date_future DATETIME
+
+	)
+INSERT INTO @IB_TEMP
+	(
+		RowNumber,
+		dim_install_site_customer_key,
+		instance_id,
+		serial_num,
+		parent_instance_id,
+		site_number,
+		sales_order_number,
+		actual_ship_date,
+		active_start_date,
+		active_end_date,
+		contract_line_start_date_previous,
+		contract_line_end_date_previous,
+		contract_line_start_date_future,
+		contract_line_end_date_future
+	)
+	 --Main query of interest. Returns multiple results per serial number, which is our desired grain of detail
+	 SELECT ROW_NUMBER() OVER(PARTITION BY p.serial_num ORDER BY p.dim_installed_part_key DESC) AS RowNumber,
+		p.dim_install_site_customer_key,
+		p.instance_id,
+		p.serial_num,
+		p.parent_instance_id,
+		p.site_number,
+		p.sales_order_number,
+		p.actual_ship_date,
+		p.active_start_date,
+		p.active_end_date,
+		p.contract_line_start_date_previous,
+		p.contract_line_end_date_previous,
+		p.contract_line_start_date_future,
+		p.contract_line_end_date_future
+	FROM [XXXXXXX].[XXXXXXX].[XXXXXXX] p
+	WHERE p.serial_num IN (SELECT SERIAL_NUMBER FROM @SN_LIST)
+
+
+DELETE FROM @IB_TEMP
+WHERE RowNumber !=1 --Utilizes row_number function to bring our grain down to the serial number level, based on the key number which is smallest for the original set of data (per our problem statement)
+
+	UPDATE @IB_TEMP
+		SET parent_serial_num=p.serial_num
+		FROM @IB_TEMP t
+			INNER JOIN
+			[XXXXXXX].[XXXXXXX].[XXXXXXX] p
+			ON t.parent_instance_id=p.instance_id	
+
+--Define the query results
+SELECT 'Adrian Junus',
+	GETDATE(),
+	c.country_name,
+	'',
+	'',
+	'',
+	p.sales_order_number AS 'Service Agreement',
+	p.serial_num,
+	p.parent_serial_num,
+	p.actual_ship_date,
+	c.customer_name,
+	c.party_number,
+	c.account_number,
+	p.site_number,
+	c.address1,
+	c.address2,
+	c.city,
+	c.[state],
+	c.province,
+	c.postal_code,
+	p.active_start_date,
+	p.active_end_date,
+	p.contract_line_start_date_previous,
+	p.contract_line_end_date_previous,
+	p.contract_line_start_date_future,
+	p.contract_line_end_date_future
+FROM @IB_TEMP  p
+	INNER JOIN
+	[XXXXXXX].[XXXXXXX].[XXXXXXX] c
+	ON p.dim_install_site_customer_key=c.dim_install_site_customer_key
+WHERE RowNumber=1
+ORDER BY p.parent_serial_num asc
+
